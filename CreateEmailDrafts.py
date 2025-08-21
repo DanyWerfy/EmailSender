@@ -17,76 +17,77 @@ from email.parser import BytesParser
 from email import policy
 from azure.identity import InteractiveBrowserCredential
 
-if getattr(sys, 'frozen', False):
-    application_path = sys._MEIPASS
-else:
-    application_path = os.path.dirname(os.path.abspath(__file__))
-
+# input paths
 CSV_FILE_PATH = os.path.join("data", "Montreal Market Data 2025(Sheet1).csv")
 CONFIG_FILE_PATH = os.path.join("data", "config.cfg")
 EMAIL_TEMPLATE_PATH = os.path.join("data", "template", "emailTemplate.msg")
 MARKETING_FLYER_PATH = os.path.join("data", "inputs", "Hotelrez_Marketing flyer.pdf")
 LOGO_PATH = os.path.join("data", "inputs", "Logo.png")
 ATTACHMENTS_INPUT_DIR = os.path.join("data", "attachements")
+output_emails_dir = "./data/emails/" 
 
+# app entry point
 def main():
-    try:
-        username = os.getlogin()
-        print(f"Hello, {username}!")
-    except OSError:
-        print("Hello there! - I couldn't find your name :(")
-    print("Welcome to this mass email drafting tool, please let Dany know if you run into any issues!")
-    print("Note: Press ctrl + C at any moment to stop the execution")
-    
+    greetUser()
     accessToken = connectToAPI()
-
     print("Starting to create email drafts!")
-    
     emailTemplate = convertMsgToMime() 
     
     with open(CSV_FILE_PATH, "r", newline='', encoding='utf-8') as data:
         csv_reader = csv.DictReader(data)
         all_rows = list(csv_reader) 
         max_rows = len(all_rows)
-        for i, row in enumerate(all_rows):
-
+        i = 0
+        for row in enumerate(all_rows):
+            # grab info
             recipientName = row["Name of recipient"]
             companyName = row["Company name"]
             recipientEmail = row["Email"]
-            
-            body, subject = replaceVariablesInEmail(emailTemplate, recipientName, companyName)
-            newMsg = createNewEmail(body, subject, recipientEmail)
-            
-            attachement_path = find_matching_attachment(company_name=companyName, search_dir=ATTACHMENTS_INPUT_DIR)
-            if attachement_path:
-                attach_file_to_email(newMsg, attachement_path)
-            else:
-                print(f"\nWarning: No company-specific PDF found for {companyName} in {ATTACHMENTS_INPUT_DIR}.")
-            
-            if os.path.exists(MARKETING_FLYER_PATH):
-                attach_file_to_email(newMsg, MARKETING_FLYER_PATH)
-            
-            output_emails_dir = "./data/emails/" 
-            os.makedirs(output_emails_dir, exist_ok=True) 
-            output_path = os.path.join(output_emails_dir, f"{subject}.eml")
-            
-            with open(output_path, "wb") as f:
-                f.write(newMsg.as_bytes())
-
+            # create the bytes for the email
+            newMsg = createEmailBytes(emailTemplate,recipientName,recipientEmail, companyName)
+            # send the email bytes
             asyncio.run(sendEmail(accessToken, newMsg, recipientEmail))
             i += 1
             print(f"completed {i}/{max_rows} drafts!")
         print("\nAll emails processed.")
 
+def greetUser():
+        try:
+            username = os.getlogin()
+            print(f"Hello, {username}!")
+        except OSError:
+            print("Hello there! - I couldn't find your name :(")
+        print("Welcome to this mass email drafting tool, please let Dany know if you run into any issues!")
+def createEmailBytes(emailTemplate: str, recipientName: str, recipientEmail: str, companyName: str):
+    # replace vars in the email
+    body, subject = replaceVariablesInEmail(emailTemplate, recipientName, companyName)
+    # create the email
+    newMsg = createNewEmail(body, subject, recipientEmail)
+    # add an attachment
+    attachement_path = find_matching_attachment(company_name=companyName, search_dir=ATTACHMENTS_INPUT_DIR)
+    if attachement_path:
+        attach_file_to_email(newMsg, attachement_path)
+    else:
+        print(f"\nWarning: No company-specific PDF found for {companyName} in {ATTACHMENTS_INPUT_DIR}.")
+    
+    if os.path.exists(MARKETING_FLYER_PATH):
+        attach_file_to_email(newMsg, MARKETING_FLYER_PATH)
+    
+    os.makedirs(output_emails_dir, exist_ok=True) 
+    output_path = os.path.join(output_emails_dir, f"{subject}.eml")
+    # write the byte steam
+    with open(output_path, "wb") as f:
+        f.write(newMsg.as_bytes())
+    return newMsg
 def convertMsgToMime():
+    final_eml_template_name = "WERFY_Email_Template.eml"
     msg = MsOxMessage(EMAIL_TEMPLATE_PATH)
     
-    output_directory_for_eml = "./data/emails/" 
-    os.makedirs(output_directory_for_eml, exist_ok=True) 
+    os.makedirs(output_emails_dir, exist_ok=True) 
     
-    msg.save_email_file(output_directory_for_eml) 
+    msg.save_email_file(output_emails_dir) 
     
-    saved_files = glob.glob(os.path.join(output_directory_for_eml, "*.eml"))
+    saved_files = glob.glob(os.path.join(output_emails_dir, "*.eml"))
     saved_files.sort(key=os.path.getmtime, reverse=True) 
     
     original_saved_path = None
@@ -94,10 +95,9 @@ def convertMsgToMime():
         original_saved_path = saved_files[0]
     else:
         print("Warning: No .eml file found after saving MSG template. Assuming 'message.eml'.")
-        original_saved_path = os.path.join(output_directory_for_eml, "message.eml")
+        original_saved_path = os.path.join(output_emails_dir, "message.eml")
 
-    final_eml_template_name = "WERFY_Email_Template.eml"
-    final_eml_template_path = os.path.join(output_directory_for_eml, final_eml_template_name)
+    final_eml_template_path = os.path.join(output_emails_dir, final_eml_template_name)
 
     if os.path.exists(original_saved_path) and original_saved_path != final_eml_template_path:
         try:
@@ -115,43 +115,33 @@ def convertMsgToMime():
 def replaceVariablesInEmail(emailToEdit, recipientName, companyName):
     with open(emailToEdit, "rb") as f:
         msg = BytesParser(policy=policy.default).parse(f)
-    
+    # find subject and replace variable
     subject = msg["subject"]
     subject = subject.replace("[Company name]", companyName)
     
     body = None
-    html_body = None
-    plain_body = None
-    
+    # walk through the message parts
     for part in msg.walk():
         content_type = part.get_content_type()
-        if content_type == "text/html":
-            charset = part.get_content_charset() or "utf-8"
-            html_body = part.get_payload(decode=True).decode(charset)
-        elif content_type == "text/plain":
-            charset = part.get_content_charset() or "utf-8"
-            plain_body = part.get_payload(decode=True).decode(charset)
-    
-    if html_body:
-        body = html_body
-    elif plain_body:
-        body = plain_body
-        body = convert_plain_to_html(body)
-    else:
-        print("Warning: No text body found in email template")
-        body = "" 
-    
-    if body is None: 
-        print("Warning: No text body found in email template")
-        body = ""
-    
+        # if the content is not html or plain text, retrn None
+        if not(content_type == "text/html" or content_type == "text/plain"):
+            print("Warning: No text body found in email template")
+            return None
+        # get char set
+        charset = part.get_content_charset() or "utf-8"
+        # decode
+        body = part.get_payload(decode=True).decode(charset)
+        if content_type == "text/plain":
+            # convert plain text into html to be eaier to work with
+            body = convert_plain_to_html(body)
+
+    # replace variables
     body = body.replace("[Company name]", companyName)
     body = body.replace("[Name of recipient]", recipientName)
-    
     body = fix_html_formatting(body)
-    
     return body, subject
 
+# helper function to convert plain text into html
 def convert_plain_to_html(plain_text):
     if not plain_text:
         return ""
@@ -168,6 +158,7 @@ def convert_plain_to_html(plain_text):
     
     return '\n'.join(html_paragraphs)
 
+# helper function to fix the html formatting
 def fix_html_formatting(html_body):
     if not html_body:
         return html_body
@@ -222,6 +213,8 @@ def createNewEmail(body, subject, recipientEmail):
     new_msg.attach(MIMEText(full_html, _subtype='html', _charset='utf-8'))
     return new_msg
 
+
+# helper function to finds an attachment using the company name
 def find_matching_attachment(company_name, search_dir):
     normalized_name = company_name.lower().replace(" ", "").replace("-", "").replace("_", "")
     pdf_files = glob.glob(os.path.join(search_dir, "*.pdf"))
@@ -231,12 +224,14 @@ def find_matching_attachment(company_name, search_dir):
             return pdf
     return None
 
+# hepler function to attach attachment to message
 def attach_file_to_email(msg, file_path):
     with open(file_path, "rb") as f:
         part = MIMEApplication(f.read(), Name=os.path.basename(file_path))
         part["Content-Disposition"] = f'attachment; filename="{os.path.basename(file_path)}"'
         msg.attach(part)
 
+# take in a message and convert it to html
 def extract_html_body(msg):
     for part in msg.walk():
         if part.get_content_type() == "text/html":
@@ -249,6 +244,7 @@ def extract_html_body(msg):
             return html
     return None
 
+# take in a message and send the email (or create draft in this case)
 async def sendEmail(accessToken, msg, recipientEmail):
     subject = msg["Subject"]
     body = extract_html_body(msg)
@@ -316,17 +312,17 @@ async def sendEmail(accessToken, msg, recipientEmail):
             print(f"\nError creating email : {response.status_code} - {response.text} for {recipientEmail}")
     else:
         print(f"\nError creating email: {response.status_code} - {response.text} for {recipientEmail}")
+
 def connectToAPI():
     config = configparser.ConfigParser()
     config.read(CONFIG_FILE_PATH) 
-    tenantId = config["azure"]["TenantId"]
     clientId = config["azure"]["ClientId"]
-    clientSecret = config["azure"]["ClientSecret"]
     credential = InteractiveBrowserCredential(client_id=clientId)
     token = credential.get_token("Mail.ReadWrite")
     access_token = token.token
     return access_token
 
+# helper function to create the table at the bottom fo the email
 def create_gds_table():
     return '''
     <p style="margin: 20pt 0 12pt 0;"><strong>GDS Codes HTO28824</strong></p>
@@ -355,6 +351,7 @@ def create_gds_table():
     </table>
     '''
 
+# helper function to create the signature at the bottom of the email
 def create_signature_section():
     logo_base64 = get_image_base64(LOGO_PATH)
 
@@ -382,6 +379,7 @@ def create_signature_section():
     </table>
     '''
 
+# take an image and convert to base64 encoding
 def get_image_base64(image_path):
     try:
         with open(image_path, "rb") as image_file:
