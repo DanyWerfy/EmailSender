@@ -1,3 +1,13 @@
+*.csv
 *.env
 *.cfg
-*/output
+*.zip
+*.spec
+*.eml
+build/
+dist/
+emails/
+inputs/
+template/
+attachements/
+output/
