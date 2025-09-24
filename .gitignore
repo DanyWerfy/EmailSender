@@ -4,6 +4,7 @@
 *.zip
 *.spec
 *.eml
+*.pyc
 build/
 dist/
 emails/
